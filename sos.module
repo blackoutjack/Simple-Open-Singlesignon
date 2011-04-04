@@ -9,7 +9,7 @@
  */	
 
 // Some utility functions
-include_once 'sos.inc';
+include_once 'sos.util.inc';
 
 // Functions for communicating with other sites
 include_once 'sos.comm.inc';
@@ -204,6 +204,18 @@ function sos_user($type, &$array, &$user, $category=null) {
 	
 }
 
+/*
+ * 
+ */
+function sos_get_local_site() {
+	// %%% is this good enough to use?
+	$thisdomain = $_SERVER['SERVER_NAME'];
+	$thissubdom = addslashes($thisdomain);
+
+	$thissite = db_fetch_object(db_query("SELECT * FROM {sos_sites} WHERE subdomain='$thissubdom'"));
+	
+	return ($thissite);
+}
 
 /*
  * Get an array of objects from sos_sites table.

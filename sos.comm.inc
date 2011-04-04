@@ -19,20 +19,34 @@ define('COMMUNICATION_ENDPOINT', 'sos/reception');
  */
 
 function sos_send_login_messages($uid) {
-	// %%%
+	$sites = sos_get_all_active_sites();
+	$thissite = sos_get_local_site();
+	foreach ($sites as $site) {
+		// Don't send a message to yourself.
+		if ($site->subdomain == $thissite->subdomain) continue;
+
+		sos_send_message($site, SOS_LOGIN, $uid);
+	}
 }
 
 function sos_send_logout_messages($uid) {
-	// %%%
+	$sites = sos_get_all_active_sites();
+	$thissite = sos_get_local_site();
+	foreach ($sites as $site) {
+		// Don't send a message to yourself.
+		if ($site->subdomain == $thissite->subdomain) continue;
+
+		sos_send_message($site, SOS_LOGOUT, $uid);
+	}
 }
 
-function sos_send_message($recipient_site_id, $message_type=SOS_PING, $uid=NULL) {
+function sos_send_message($recipient, $message_type=SOS_PING, $uid=NULL) {
 	
 	// Construct payload and HTTP method based on message_type and contents.
 	switch ($message_type) {
 		case SOS_PING:
 			$method = 'GET';
-			$payload = '';
+			$payload = 'ping';
 			break;
 		case SOS_LOGIN:
 			$method = 'POST';
@@ -48,12 +62,11 @@ function sos_send_message($recipient_site_id, $message_type=SOS_PING, $uid=NULL)
 			// %%%
 			break;
 		default:
-			watchdog('sos-comm', "Unknown message type: $message_type", WATCHDOG_WARNING);
+			watchdog('argument', "Unknown message type: $message_type", WATCHDOG_WARNING);
 			return FALSE;
+	}
 
-	$site = db_fetch_object(db_query("SELECT subdomain FROM 
-
-	_sos_communicate($hostname, $payload, $method);
+	_sos_communicate($recipient->subdomain, $payload, $method);
 }
 
 
