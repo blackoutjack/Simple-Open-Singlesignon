@@ -1,0 +1,13 @@
+Simple Open Singlesignon (SOS) for Drupal 6
+
+Date: 2011-04-04
+Author: Rich Joiner
+Contact email: rich@richjoiner.com
+
+Description:
+This module is created as an original project for CS838 - Applied Cryptography taught by Professor Tom Ristenpart at the UW-Madison Computer Sciences department. The goal is to synthesize ideas from prior efforts such as the Single Sign-on module (http://drupal.org/project/sso) and Fierce SSO (http://drupal.org/project/fierce_sso) to create a more robust and performant single sign-on implementation.
+
+The initial phase of development will focus on the case in which two websites share a single database and use the domain access module to host multiple 2nd-level domains. (The phrase "2nd-level domain" refers to "example" in the URL "http://www.example.com". Due to cross-domain cookie restrictions imposed by browsers, this is a substantially trickier prospect than conducting single sign-on across subdomains that share a common 2nd-level domain.)
+
+Infrastructure is also being created to facilitate the eventual coordination of SOS across domains that do not share a database or file system.
+
