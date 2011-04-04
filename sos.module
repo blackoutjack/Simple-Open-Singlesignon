@@ -1,0 +1,329 @@
+<?php
+// $Id: sos.module,v 0.1 2011/02/20 04:56:47 blackoutjack Exp $
+
+/**
+ * @file
+ * Primary module file for Simple Open Singlesignon 
+ *
+ * Logs in a user simultaneously to a group of domains linked together with the domain_access module
+ */	
+
+// Some utility functions
+include_once 'sos.inc';
+
+// Functions for communicating with other sites
+include_once 'sos.comm.inc';
+
+define('SOS_GLOBAL_SESSION_COOKIE', 'sos_global_session');
+
+
+/**
+ * Implementation of hook_menu().
+ */
+function sos_menu() {
+	$items['admin/settings/sos'] = array(
+		'title' => 'Simple Open Singlesignon',
+		'description' => 'Enable single sign-on across all domains',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('sos_admin_settings'),
+		'access arguments' => array('administer sos'),
+		'file' => 'sos.admin.inc',
+	);
+	// Defined in sos.comm.inc
+	$items[COMMUNICATION_ENDPOINT] = array(
+		'title' => 'Simple Open Singlesignon Site Registration',
+		'description' => 'Target page for a remote site that want to communicate with this one',
+		'page callback' => 'sos_register_remote_domain',
+		'page arguments' => array(2,3),
+		'access arguments' => array('access sos'), // %%% some way to check access here?
+		'file' => 'sos.reception.inc'
+	);
+	$items['sos/set-cookie'] = array(
+		'title' => 'Simple Open Singlesignon',
+		'description' => 'Set single sign-on cookie on client for cross-domain login',
+		'page callback' => 'sos_set_cookie',
+		'access arguments' => array('access sos'),
+	);
+	$items['sos/logo'] = array(
+		'title' => 'Simple Open Singlesignon',
+		'description' => 'Setting single sign-on cookie for cross-domain login',
+		'page callback' => 'sos_logo',
+		'access arguments' => array('access sos'),
+	);
+
+	return $items;
+}
+
+
+/**
+ * Implementation of hook_boot().
+ *
+ * Retrieve or set up the global session id to be shared across SOS sites.
+ *
+ * This runs on all domains where the SOS module is enabled, so there are different execution paths
+ * for a number of scenarios.
+ *
+ * 1. The first time a user (browser session) has accessed any page, a global_sid will be established.
+ * 2. When a user visits the login page on domain A, the global_sid is passed via a GET parameter 
+ *		to the other sites (see sos_form_alter@user_login).
+ * 3. 
+ * 
+ */
+function sos_boot() {
+	$enabled = variable_get('sos_enabled', false);
+	if (!$enabled) return;
+
+	// Get the session identifier local to this domain.
+	$sid = session_id();
+
+	// Retrieve any previously set global_session_id cookie.
+	if (isset($_COOKIE['global_session_id'])) {
+		$global_sid_cookie = $_COOKIE[SOS_GLOBAL_SESSION_COOKIE];
+	}
+
+	// If this is a linking request to sos-set-cookie or sos-logo, then get the global_sid from the request parameters.
+	if (isset($_GET['global_sid'])) {
+		// %%% use nonce to verify
+		$global_sid_request = $_GET['global_sid'];
+	}
+
+	// Check for a global_sid previously entered in the sessions table.
+	$global_sid_database = _sos_get_global_sid_database();
+
+	// Verify the consistency of all of the global session ids collected so far and choose one to use.
+	$global_sid = _sos_reconsile_global_session_ids($global_sid_cookie, $global_sid_database, $global_sid_request);
+
+	// If global_sid is empty, there was an error during reconsiliation.
+	if (empty($global_sid)) return;
+
+	// Get the current domain id.
+	$thisdom = domain_get_domain();
+	$domain_id = $thisdom['domain_id'];
+
+	// Update the database to allow the server to recognize session.
+	sess_write($sid, serialize($_SESSION));
+	db_query("UPDATE {sessions} SET sos_sid='%s',domain='%s',nonce='%s' WHERE sid='%s'", $global_sid, $domain_id, $nonce, $sid);
+
+	// Set cookie to allow the browser to recognize session.
+	// %%% fill in other parameters
+	setcookie(SOS_GLOBAL_SESSION_COOKIE, $global_sid, 0, '/');
+
+
+}
+
+
+/**
+ * Implementation of hook_perm().
+ */
+function sos_perm() {
+	return array('access sos', 'administer sos');
+}
+
+/**
+ * Display the site logo directly and set a session cookie.
+ */
+function sos_logo() {
+	$enabled = variable_get('sos_enabled', false);
+	if (!$enabled) return;
+
+	// The global_sid should have been populated during hook_boot.
+	$global_sid = _sos_get_global_sid_database();
+	
+	$thisdom = domain_get_domain();
+	$theme = domain_theme_lookup($thisdom['domain_id']);
+	$theme_settings = unserialize($theme['settings']);
+	
+	$logo = $theme_settings['logo_path'];
+	$filelength = filesize($logo);
+	
+	// %%% generalize to other image types
+	header("Content-type: image/png");
+	//header("Content-type: text/plain");
+	header('Last-Modified: '.date('r'));
+	header('Accept-Ranges: bytes');
+	header('Content-Length: '.$filelength);
+
+	readfile($logo);
+	//var_dump($theme_settings);
+	//echo $logo;
+
+
+}
+
+/**
+ * Display the site logo within an iframe and set a session cookie.
+ */
+function sos_set_cookie() {
+	$enabled = variable_get('sos_enabled', false);
+	if (!$enabled) return;
+
+	$global_sid = _sos_get_global_sid_database();
+
+	$thisdom = domain_get_domain();
+	$domain_id = $thisdom['domain_id'];
+
+	// %%% hard code for the moment
+	$logo = theme_get_setting('logo');
+	$logo = "/sites/default/files/satara_logo.png";
+
+	$scripts = drupal_get_js();
+
+	echo '<html>'."\n";
+	echo '<head>'."\n";
+	echo $scripts;
+	echo '<script type="text/javascript">'."\n";
+	echo '$(document).ready(function () {'."\n";
+	echo '	document.cookie = "'.SOS_GLOBAL_SESSION_COOKIE.'='.$global_sid.';";'."\n";
+	echo '	if (document.cookie.indexOf("'.SOS_GLOBAL_SESSION_COOKIE.'=") == -1) {'."\n";
+	echo '		msgdiv = $("#message");'."\n";
+	echo '		msgdiv.text("Your browser does not allow 3rd-party cookies, so we won\'t be able to log you in to this site.");'."\n";
+		echo '	}'."\n";
+	echo '})'."\n";
+	echo '</script>'."\n";
+	echo '</head>'."\n";
+	echo '<body>'."\n";
+	echo '<div id="message"></div>'."\n";
+	echo '<img src="'.$logo.'" />'."\n";
+	echo '</body>'."\n";
+	echo '</html>'."\n";
+
+	exit;
+}
+
+/*
+ * Invoked after the user has been authenticated (on the current site).
+ */
+function sos_user($type, &$array, &$user, $category=null) {
+	$enabled = variable_get('sos_enabled', false);
+	if (!$enabled) return;
+
+	// %%% Get the global_sid from the database rather than the form submission.
+	// Alternatively get from form_values array.
+	$global_sid = _sos_get_global_sid_database();
+
+	
+}
+
+
+/*
+ * Get an array of objects from sos_sites table.
+ */
+function sos_get_all_active_sites() {
+	static $sites;
+	if ($sites) return $sites;
+	
+	$sites = array();
+	$site_result = db_query("SELECT * FROM sos_sites WHERE status=1");
+	while ($site = db_fetch_object($site_result)) {
+		$sites[] = $site;
+	}
+
+	return $sites;
+}
+
+
+/*
+ * Handle a request from a remote site to be added to the SOS ring.
+ */
+function sos_register_remote_site($payload) {
+	domain, $authcode) {
+	_sos_register_remote_site(
+}
+
+
+/**
+ * Implementation of hook_form_alter().
+ */
+function sos_form_alter(&$form, $form_state, $form_id) {
+
+	switch ($form_id) {
+		case 'user_login':
+		case 'user_login_block':
+			$enabled = variable_get('sos_enabled', false);
+			if (!$enabled) {
+				return;
+			}
+
+			$global_sid = _sos_get_global_sid_database();
+
+			$thisdom = domain_get_domain();
+			$sos_markup = "";
+			foreach (domain_domains() as $dom) {
+				// Don't need an iframe to initiate a session for the current domain.
+				if ($dom['domain_id'] == $thisdom['domain_id']) {
+					continue;
+				}
+
+				// Construct the base url for domain synchronization.
+				$sos_url = ($_SERVER['HTTPS'] ? "https" : "http").'://'.$dom['subdomain'].'/sos-logo';
+				$sos_url .= '?global_sid='.$global_sid;
+				$sos_markup .= '<img id="sos-logo-'.$dom['domain_id'].'" class="sos-logo" src="'.$sos_url.'" />';
+				//$sos_markup .= '<iframe id="sos-frame-'.$dom['domain_id'].'" class="sos-frame" src="'.$sos_url.'" />';
+			}
+
+			// Add the global_sid as a hidden field to be accessed by the submit handler.
+			$form['sos_global_sid'] = array(
+				"#type" => 'hidden',
+				"#value" => $global_sid,
+			);
+			// Add the markup to the login form.
+			$form['sos_sites'] = array(
+				"#type" => 'markup',
+				"#value" => $sos_markup,
+			);
+			break;
+		case 'user_pass':
+			break;
+		case 'user_register':
+			break;
+		default:
+			return;
+	}
+/*
+	include_once dirname(drupal_get_path('module', 'singlesignon_client')) .'/singlesignon.inc';
+	$controller = variable_get('singlesignon_client_controller_url', '');
+	$key = variable_get('singlesignon_client_private_key', '');
+
+	global $base_url;
+	switch ($form_id) {
+		case 'user_pass':
+			$action = 'user/password';
+			break;
+
+		case 'user_register':
+			if (stripos($form['#action'], 'user/register') && !variable_get('user_email_verification', TRUE) && variable_get('user_register', 1) < 2) {
+				// User is registering, email verifications are turned off and admin approval is not required.
+				$_SESSION['singlesignon_message'] = t('You have successfully registered on this site. Please Log in now.');
+			}
+			break;
+
+		case 'user_login_block':
+		case 'user_login':
+			$action = 'user/login';
+			// Ensure the block submits to the stand-alone form.
+			$form['form_id']['#value'] = 'user_login';
+			break;
+	}
+
+	// Change user form actions to a signed URL on the controller site.
+	if (isset($action)) {
+		// We need to make sure that singlesignon_message is not passed after this screen.
+		$data = parse_url(request_uri());
+		parse_str($data['query'], $query);
+		unset($query['singlesignon_message']);
+		$query = singlesignon_build_query($query);
+		$origin = $base_url . '?' . $query;
+
+		$form['#action'] = singlesignon_create_request(
+			$controller,
+			$action,
+			array(
+				'origin' => $origin,
+			),
+			$key
+		);
+	}
+*/
+
+}
+
