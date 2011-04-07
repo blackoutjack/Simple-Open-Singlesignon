@@ -36,5 +36,14 @@ exit;
 function _sos_reception_watchdog($message) {
 	global $ipaddress, $remotehost;
 	$message = "$message\r\t$ipaddress\r\t$remotehost";
-	watchdog('sos-warning', $message, WATCHDOG_WARNING);
+	watchdog('sos', $message, WATCHDOG_WARNING);
 }
+
+/*
+ * Handle a request from a remote site to be added to the SOS ring.
+ */
+function sos_register_remote_site($payload) {
+	_sos_register_remote_site($domain, $authcode) {
+}
+
+

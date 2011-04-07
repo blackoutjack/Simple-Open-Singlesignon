@@ -99,7 +99,7 @@ function _sos_communicate($host, $payload, $method='GET') {
 
 	$response = curl_exec($conn);
 	if ($response === FALSE) {
-		watchdog('sos_comm', "Error while communicating with $host", WATCHDOG_ERROR);
+		watchdog('sos', "Error while communicating with $host", WATCHDOG_ERROR);
 	}
 
 	return $response;

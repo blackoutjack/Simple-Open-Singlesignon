@@ -8,20 +8,20 @@
  * Logs in a user simultaneously to a group of domains linked together with the domain_access module
  */	
 
-// Some utility functions
+// Some utility functions and configuration constants
 include_once 'sos.util.inc';
 
 // Functions for communicating with other sites
 include_once 'sos.comm.inc';
 
-define('SOS_GLOBAL_SESSION_COOKIE', 'sos_global_session');
 
 
 /**
  * Implementation of hook_menu().
  */
 function sos_menu() {
-	$items['admin/settings/sos'] = array(
+	// Administrative pages
+	$items['admin/build/sos/configure'] = array(
 		'title' => 'Simple Open Singlesignon',
 		'description' => 'Enable single sign-on across all domains',
 		'page callback' => 'drupal_get_form',
@@ -29,7 +29,46 @@ function sos_menu() {
 		'access arguments' => array('administer sos'),
 		'file' => 'sos.admin.inc',
 	);
-	// Defined in sos.comm.inc
+	$items['admin/build/sos/sites'] = array(
+		'title' => 'Simple Open Singlesignon Sites',
+		'description' => 'View a list of sites in the SOS ring',
+		'page callback' => 'sos_sites_list',
+		'access arguments' => array('administer sos'),
+		'file' => 'sos.admin.inc',
+	);
+	$items['admin/build/sos/sites/add'] = array(
+		'title' => 'Add Simple Open Singlesignon Site',
+		'description' => 'Manually add a new site to the SOS ring',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('sos_site_edit_form'),
+		'access arguments' => array('administer sos'),
+		'file' => 'sos.admin.inc',
+	);
+	$items['admin/build/sos/sites/edit/%'] = array(
+		'title' => 'Add Simple Open Singlesignon Site',
+		'description' => 'Edit an existing SOS site',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('sos_site_edit_form', 5),
+		'access arguments' => array('administer sos'),
+		'file' => 'sos.admin.inc',
+	);
+	$items['admin/build/sos/sites/delete/%'] = array(
+		'title' => 'Remove Simple Open Singlesignon Site',
+		'description' => 'Delete an existing SOS site',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('sos_site_delete_form', 5),
+		'access arguments' => array('administer sos'),
+		'file' => 'sos.admin.inc',
+	);
+	$items['sos/generator/%'] = array(
+		'page callback' => 'sos_ahah_generate_key',
+		'page arguments' => array(2),
+		'access arguments' => array('administer sos'),
+		'file' => 'sos.admin.inc',
+		'type' => MENU_CALLBACK,
+	);
+
+	// COMMUNICATION_ENDPOINT defined in sos.comm.inc
 	$items[COMMUNICATION_ENDPOINT] = array(
 		'title' => 'Simple Open Singlesignon Site Registration',
 		'description' => 'Target page for a remote site that want to communicate with this one',
@@ -104,11 +143,14 @@ function sos_boot() {
 	sess_write($sid, serialize($_SESSION));
 	db_query("UPDATE {sessions} SET sos_sid='%s',domain='%s',nonce='%s' WHERE sid='%s'", $global_sid, $domain_id, $nonce, $sid);
 
-	// Set cookie to allow the browser to recognize session.
-	// %%% fill in other parameters
-	setcookie(SOS_GLOBAL_SESSION_COOKIE, $global_sid, 0, '/');
-
-
+	// Create and set the global cookie to allow the browser to recognize session.
+	// Examine the normal session cookie to match most of its parameters.
+	$sess_cookie = session_get_cookie_params();
+	$cookie_domain = $sess_cookie['domain'];
+	$lifetime = $sess_cookie['lifetime'];
+	// Allow debugging, but otherwise this needs to be a secure cookie.
+	$secure = FORCE_SSL;
+	setcookie(SOS_GLOBAL_SESSION_COOKIE, $global_sid, 0, '/', $cookie_domain, $secure);
 }
 
 
@@ -134,6 +176,13 @@ function sos_logo() {
 	$theme_settings = unserialize($theme['settings']);
 	
 	$logo = $theme_settings['logo_path'];
+	if (empty($logo)) {
+		init_theme();
+		$logo = theme_get_setting('logo');
+		if (substr($logo, 0, 1) == '/') { // %%% not great
+			$logo = substr($logo, 1);
+		}
+	}
 	$filelength = filesize($logo);
 	
 	// %%% generalize to other image types
@@ -205,14 +254,16 @@ function sos_user($type, &$array, &$user, $category=null) {
 }
 
 /*
- * 
+ * Get a site object representing the current/local site.
  */
 function sos_get_local_site() {
+	static $thissite;
+	if ($thissite) return $thissite;
+
 	// %%% is this good enough to use?
 	$thisdomain = $_SERVER['SERVER_NAME'];
-	$thissubdom = addslashes($thisdomain);
 
-	$thissite = db_fetch_object(db_query("SELECT * FROM {sos_sites} WHERE subdomain='$thissubdom'"));
+	$thissite = db_fetch_object(db_query("SELECT * FROM {sos_sites} WHERE subdomain='%s'", $thisdomain));
 	
 	return ($thissite);
 }
@@ -225,7 +276,7 @@ function sos_get_all_active_sites() {
 	if ($sites) return $sites;
 	
 	$sites = array();
-	$site_result = db_query("SELECT * FROM sos_sites WHERE status=1");
+	$site_result = db_query("SELECT * FROM {sos_sites} WHERE status=1");
 	while ($site = db_fetch_object($site_result)) {
 		$sites[] = $site;
 	}
@@ -233,13 +284,13 @@ function sos_get_all_active_sites() {
 	return $sites;
 }
 
-
 /*
- * Handle a request from a remote site to be added to the SOS ring.
+ * Load an existing site by id.
  */
-function sos_register_remote_site($payload) {
-	domain, $authcode) {
-	_sos_register_remote_site(
+function sos_get_site($site_id) {
+	$site = db_fetch_object(db_query("SELECT * FROM {sos_sites} WHERE site_id=%d", $site_id));
+	
+	return $site;
 }
 
 
@@ -249,6 +300,9 @@ function sos_register_remote_site($payload) {
 function sos_form_alter(&$form, $form_state, $form_id) {
 
 	switch ($form_id) {
+		case 'sos_admin_settings':
+			$form['#cache'] = TRUE;
+			break;
 		case 'user_login':
 		case 'user_login_block':
 			$enabled = variable_get('sos_enabled', false);
@@ -267,7 +321,7 @@ function sos_form_alter(&$form, $form_state, $form_id) {
 				}
 
 				// Construct the base url for domain synchronization.
-				$sos_url = ($_SERVER['HTTPS'] ? "https" : "http").'://'.$dom['subdomain'].'/sos-logo';
+				$sos_url = ($_SERVER['HTTPS'] ? "https" : "http").'://'.$dom['subdomain'].'/sos/logo';
 				$sos_url .= '?global_sid='.$global_sid;
 				$sos_markup .= '<img id="sos-logo-'.$dom['domain_id'].'" class="sos-logo" src="'.$sos_url.'" />';
 				//$sos_markup .= '<iframe id="sos-frame-'.$dom['domain_id'].'" class="sos-frame" src="'.$sos_url.'" />';
@@ -285,57 +339,14 @@ function sos_form_alter(&$form, $form_state, $form_id) {
 			);
 			break;
 		case 'user_pass':
+			// %%%
 			break;
 		case 'user_register':
+			// %%% !!!
 			break;
 		default:
 			return;
 	}
-/*
-	include_once dirname(drupal_get_path('module', 'singlesignon_client')) .'/singlesignon.inc';
-	$controller = variable_get('singlesignon_client_controller_url', '');
-	$key = variable_get('singlesignon_client_private_key', '');
-
-	global $base_url;
-	switch ($form_id) {
-		case 'user_pass':
-			$action = 'user/password';
-			break;
-
-		case 'user_register':
-			if (stripos($form['#action'], 'user/register') && !variable_get('user_email_verification', TRUE) && variable_get('user_register', 1) < 2) {
-				// User is registering, email verifications are turned off and admin approval is not required.
-				$_SESSION['singlesignon_message'] = t('You have successfully registered on this site. Please Log in now.');
-			}
-			break;
-
-		case 'user_login_block':
-		case 'user_login':
-			$action = 'user/login';
-			// Ensure the block submits to the stand-alone form.
-			$form['form_id']['#value'] = 'user_login';
-			break;
-	}
-
-	// Change user form actions to a signed URL on the controller site.
-	if (isset($action)) {
-		// We need to make sure that singlesignon_message is not passed after this screen.
-		$data = parse_url(request_uri());
-		parse_str($data['query'], $query);
-		unset($query['singlesignon_message']);
-		$query = singlesignon_build_query($query);
-		$origin = $base_url . '?' . $query;
-
-		$form['#action'] = singlesignon_create_request(
-			$controller,
-			$action,
-			array(
-				'origin' => $origin,
-			),
-			$key
-		);
-	}
-*/
 
 }
 
