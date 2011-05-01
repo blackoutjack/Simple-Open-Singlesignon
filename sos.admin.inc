@@ -189,10 +189,20 @@ function sos_sites_list(&$form_state) {
 	return $output;
 }
 
+function sos_load_site($site_id) {
+	if (!is_numeric($site_id)) {
+		return NULL;
+	}
+	if ($site_obj = db_fetch_object(db_query('SELECT s.* FROM {sos_sites} s WHERE site_id=%d', $site_id))) {
+		return $site_obj;
+	}
+	return NULL;
+}
+
 function sos_site_edit_form(&$form_state, $site_id = NULL) {
 	$thissite = sos_get_local_site();
 	if ($site_id != NULL) {
-		$site = sos_load_site($site_id);
+		$site = sos_load_site($site_id); // %%% then test disabling site 3, then take screenshot, send to Sue
 		$form_title = t('Edit SOS site');
 		$form_description = t('Alter the attributes of a site in the SOS ring.');
 	} else {
@@ -253,8 +263,10 @@ function sos_site_edit_form(&$form_state, $site_id = NULL) {
 	$form['sos_edit']['submit'] = array(
 		'#type' => 'submit',
 		'#title' => 'Save',
+		'#default_value' => 'Save',
 	);
 
+	return $form;
 }
 
 function sos_site_edit_form_validate($form, &$form_state) {
@@ -266,16 +278,27 @@ function sos_site_edit_form_submit($form, &$form_state) {
 	if ($form_state['values']['op'] == $form_state['values']['cancel']) {
 		return;
 	}
+	
 	$siteid = $form_state['values']['site_id'];
-	$subdomain = $form_state['values']['sos_edit']['subdomain'];
-	$sitename = $form_state['values']['sos_edit']['site_name'];
-	$status = $form_state['values']['sos_edit']['status'];
+	$subdomain = $form_state['values']['subdomain'];
+	$sitename = $form_state['values']['site_name'];
+	$status = $form_state['values']['status'];
+	if (DEBUG) {
+		dump("sd: ".$subdomain);
+		dump("sn: ".$sitename);
+		dump("st: ".$status);
+	}
 
 	// Update case
 	if ($siteid) {
 		$orig_subdomain = $form['sos_edit']['subdomain']['#default_value'];
 		$orig_sitename = $form['sos_edit']['site_name']['#default_value'];
 		$orig_status = $form['sos_edit']['status']['#default_value'];
+		if (DEBUG) {
+			dump("osd: ".$orig_subdomain);
+			dump("osn: ".$orig_sitename);
+			dump("ost: ".$orig_status);
+		}
 	
 		// Update non-coordinated data.
 		db_query("UPDATE {sos_sites} SET site_name='%s' WHERE site_id=%d", $sitename, $siteid);

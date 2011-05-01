@@ -9,7 +9,7 @@ include_once 'sos.comm.inc';
 $ipaddress = $_SERVER['REMOTE_ADDR'];
 $remotehost = $_SERVER['REMOTE_HOST'] ? $_SERVER['REMOTE_HOST'] : gethostbyaddr($ipaddress);
 
-if (USE_SSL && (empty($_SERVER['HTTPS']) || $_SERVER['HTTPS'] == 'off')) {
+if (USE_SSL && !_sos_is_secure()) {
 	_sos_reception_watchdog("Non-secure request received");
 	return;
 }

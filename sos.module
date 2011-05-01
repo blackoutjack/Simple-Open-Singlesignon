@@ -112,36 +112,21 @@ function sos_boot() {
 	$enabled = variable_get('sos_enabled', false);
 	if (!$enabled) return;
 
-	// Get the session identifier local to this domain.
 	$sid = session_id();
-
-	// Retrieve any previously set global_session_id cookie.
-	if (isset($_COOKIE['global_session_id'])) {
-		$global_sid_cookie = $_COOKIE[SOS_GLOBAL_SESSION_COOKIE];
-	}
-
-	// If this is a linking request to sos-set-cookie or sos-logo, then get the global_sid from the request parameters.
-	if (isset($_GET['global_sid'])) {
-		// %%% use nonce to verify
-		$global_sid_request = $_GET['global_sid'];
-	}
-
-	// Check for a global_sid previously entered in the sessions table.
-	$global_sid_database = _sos_get_global_sid_database();
-
-	// Verify the consistency of all of the global session ids collected so far and choose one to use.
-	$global_sid = _sos_reconsile_global_session_ids($global_sid_cookie, $global_sid_database, $global_sid_request);
+	sess_write($sid, serialize($_SESSION));
+	$global_sid = _sos_get_global_sid();
 
 	// If global_sid is empty, there was an error during reconsiliation.
 	if (empty($global_sid)) return;
 
 	// Get the current domain id.
+	// %%% move this stuff into sos.util.inc, and implement hmac checking
 	$thisdom = domain_get_domain();
 	$domain_id = $thisdom['domain_id'];
 
 	// Update the database to allow the server to recognize session.
-	sess_write($sid, serialize($_SESSION));
-	db_query("UPDATE {sessions} SET sos_sid='%s',domain='%s',nonce='%s' WHERE sid='%s'", $global_sid, $domain_id, $nonce, $sid);
+	db_query("UPDATE {sessions} SET sos_sid='%s',domain='%s',sos_nonce='%s' WHERE sid='%s'", $global_sid, $domain_id, $nonce, $sid);
+	//watchdog('sos',"update {sessions} set sos_sid='%s',domain='%s',sos_nonce='%s' where sid='%s'", array($global_sid,$domain_id,$nonce,$sid), WATCHDOG_NOTICE);
 
 	// Create and set the global cookie to allow the browser to recognize session.
 	// Examine the normal session cookie to match most of its parameters.
@@ -150,7 +135,9 @@ function sos_boot() {
 	$lifetime = $sess_cookie['lifetime'];
 	// Allow debugging, but otherwise this needs to be a secure cookie.
 	$secure = FORCE_SSL;
-	setcookie(SOS_GLOBAL_SESSION_COOKIE, $global_sid, 0, '/', $cookie_domain, $secure);
+	// %%% Restrict root URI based on Drupal setup.
+	$root_uri = '/';
+	setcookie(SOS_GLOBAL_SESSION_COOKIE, $global_sid, $lifetime, $root_uri, $cookie_domain, $secure);
 }
 
 
@@ -169,7 +156,7 @@ function sos_logo() {
 	if (!$enabled) return;
 
 	// The global_sid should have been populated during hook_boot.
-	$global_sid = _sos_get_global_sid_database();
+	$global_sid = _sos_get_global_sid();
 	
 	$thisdom = domain_get_domain();
 	$theme = domain_theme_lookup($thisdom['domain_id']);
@@ -206,7 +193,7 @@ function sos_set_cookie() {
 	$enabled = variable_get('sos_enabled', false);
 	if (!$enabled) return;
 
-	$global_sid = _sos_get_global_sid_database();
+	$global_sid = _sos_get_global_sid();
 
 	$thisdom = domain_get_domain();
 	$domain_id = $thisdom['domain_id'];
@@ -242,15 +229,40 @@ function sos_set_cookie() {
 /*
  * Invoked after the user has been authenticated (on the current site).
  */
-function sos_user($type, &$array, &$user, $category=null) {
+function sos_user($op, &$edit, &$account, $category=null) {
 	$enabled = variable_get('sos_enabled', false);
 	if (!$enabled) return;
 
-	// %%% Get the global_sid from the database rather than the form submission.
-	// Alternatively get from form_values array.
-	$global_sid = _sos_get_global_sid_database();
+	switch ($op) {
+		case 'login':
+			// Get old global_sid from form_values array.
+			$global_sid = $edit['sos_global_sid'];
+			//$global_sid = _sos_get_global_sid(); // Empty because the session has been regenerated.
+			
+			// %%% Need to verify the global_sid somehow, for some reason?
+			// Not generating a new one because GSID cookie should always be secure
 
+
+			_sos_login_connected_sites($account, $global_sid);
+
+			$sos_markup = '<p class="sos-message">'.t("You have also been logged in to the following sites.").'</p>';
+			$sos_markup .= _sos_render_logos();	
+
+			drupal_set_message($sos_markup);
+			break;
+		case 'logout':
+			$global_sid = _sos_get_global_sid();
+
+			drupal_set_message(var_export($account,true));
+			_sos_logout_connected_sites($account, $global_sid);
+
+			$sos_markup = '<p class="sos-message">'.t("You have also been logged out of the following sites.").'</p>';
+			//$sos_markup .= _sos_render_logos();	
+
+			drupal_set_message($sos_markup);
+			break;
 	
+	}
 }
 
 /*
@@ -293,6 +305,29 @@ function sos_get_site($site_id) {
 	return $site;
 }
 
+/*
+ * Define the global SOS ID propagation blocks.
+ */
+/*
+function sos_block($op, $delta, $edit = array()) {
+	switch ($op) {
+		case 'list':
+			$blocks = array();
+
+			$logoblock = array(
+				'info' => "SOS Logo Block",
+				'cache' => BLOCK_NO_CACHE,
+
+			);
+
+			return $blocks;
+
+		case 'view':
+			
+			break;
+
+}
+*/
 
 /**
  * Implementation of hook_form_alter().
@@ -305,27 +340,17 @@ function sos_form_alter(&$form, $form_state, $form_id) {
 			break;
 		case 'user_login':
 		case 'user_login_block':
+			//drupal_set_message(drupal_get_path('module', 'sos')."/sos.css");  // %%% wasn't working
+			//drupal_add_css(drupal_get_path('sos', 'module')."/sos.css");
 			$enabled = variable_get('sos_enabled', false);
 			if (!$enabled) {
 				return;
 			}
 
-			$global_sid = _sos_get_global_sid_database();
-
-			$thisdom = domain_get_domain();
-			$sos_markup = "";
-			foreach (domain_domains() as $dom) {
-				// Don't need an iframe to initiate a session for the current domain.
-				if ($dom['domain_id'] == $thisdom['domain_id']) {
-					continue;
-				}
-
-				// Construct the base url for domain synchronization.
-				$sos_url = ($_SERVER['HTTPS'] ? "https" : "http").'://'.$dom['subdomain'].'/sos/logo';
-				$sos_url .= '?global_sid='.$global_sid;
-				$sos_markup .= '<img id="sos-logo-'.$dom['domain_id'].'" class="sos-logo" src="'.$sos_url.'" />';
-				//$sos_markup .= '<iframe id="sos-frame-'.$dom['domain_id'].'" class="sos-frame" src="'.$sos_url.'" />';
-			}
+			// %%% Make this message configurable.
+			$sos_markup = '<p class="sos-message">'.t("You will also be logged into").'</p>';
+			$sos_markup .= _sos_render_logos();
+			$global_sid = _sos_get_global_sid();
 
 			// Add the global_sid as a hidden field to be accessed by the submit handler.
 			$form['sos_global_sid'] = array(
@@ -336,13 +361,32 @@ function sos_form_alter(&$form, $form_state, $form_id) {
 			$form['sos_sites'] = array(
 				"#type" => 'markup',
 				"#value" => $sos_markup,
+				"#weight" => 500, // %%% Arbitrary, can check the current weights
 			);
+			$form['submit']["#weight"] = 499; // %%% Arbitrary
+
 			break;
 		case 'user_pass':
 			// %%%
 			break;
 		case 'user_register':
-			// %%% !!!
+			// Registration form also needs to be an "airlock" and make requests to the other sites.
+			$sos_markup = '<p class="sos-message">'.t("You will also be able to use this account on").'</p>';
+			$sos_markup .= _sos_render_logos();
+			$global_sid = _sos_get_global_sid();
+
+			// Add the global_sid as a hidden field to be accessed by the submit handler.
+			$form['sos_global_sid'] = array(
+				"#type" => 'hidden',
+				"#value" => $global_sid,
+			);
+			// Add the markup to the login form.
+			$form['sos_sites'] = array(
+				"#type" => 'markup',
+				"#value" => $sos_markup,
+				"#weight" => 500, // %%% Arbitrary, can check the current weights
+			);
+			$form['submit']["#weight"] = 499; // %%% Arbitrary
 			break;
 		default:
 			return;

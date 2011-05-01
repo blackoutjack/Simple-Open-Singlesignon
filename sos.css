@@ -1,3 +1,7 @@
 .sos-frame {
 	overflow: hidden;
 }
+
+.sos-message {
+	margin-top: 12px;
+}
