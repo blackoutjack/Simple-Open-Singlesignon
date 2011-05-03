@@ -19,45 +19,23 @@ function sos_admin_settings() {
     '#description' => t("Configure the SOS module."),
   );
 
-  $form['sos']['sos_global_site_id_private_key'] = array(
+  $form['sos']['sos_session_id_private_key'] = array(
     '#type' => 'textfield',
-    '#title' => t('Global Site ID Private Key'),
-    '#default_value' => variable_get('sos_global_site_id_private_key', ''),
-    '#description' => t('This key is used to validate other domains that this site will coordinate with.'),
+    '#title' => t('SOS Session ID Private Key'),
+    '#default_value' => variable_get('sos_session_id_private_key', ''),
+    '#description' => t('This key is used to validate SOS user session IDs that are initiated by other sites.'),
 	'#size' => 40,
 	'#maxlength' => 256,
   );
   
-  // %%% safe to communicate this via ahah?
-  $form['sos']['sos_global_site_id_key_generate'] = array(
-    '#type' => 'button',
-	'#value' => t('Generate'),
-	'#ahah' => array(
-		'path' => 'sos/generator/site',
-		'event' => 'click',
-		'method' => 'replace',
-		'wrapper' => 'edit-sos-global-site-id-private-key-wrapper',
-	),
-  );
-
-  $form['sos']['sos_global_session_id_private_key'] = array(
-    '#type' => 'textfield',
-    '#title' => t('Global Session ID Private Key'),
-    '#default_value' => variable_get('sos_global_session_id_private_key', ''),
-    '#description' => t('This key is used to validate global user session IDs that are initiated by other sites.'),
-	'#size' => 40,
-	'#maxlength' => 256,
-  );
-  
-  // %%% safe to communicate this via ahah?
-  $form['sos']['sos_global_session_id_key_generate'] = array(
+  $form['sos']['sos_session_id_key_generate'] = array(
     '#type' => 'button',
 	'#value' => t('Generate'),
 	'#ahah' => array(
 		'path' => 'sos/generator/session',
 		'event' => 'click',
 		'method' => 'replace',
-		'wrapper' => 'edit-sos-global-session-id-private-key-wrapper',
+		'wrapper' => 'edit-sos-session-id-private-key-wrapper',
 	),
   );
 
@@ -91,7 +69,7 @@ function sos_ahah_generate_key($type = 'session') {
 	$form = drupal_rebuild_form($form_id, $form_state, $args, $form_build_id);
 
 	// Render a new field (with a filled in value) to replace the old one.
-	$item_name = ($type == "site") ? 'sos_global_site_id_private_key' : 'sos_global_session_id_private_key';
+	$item_name = 'sos_session_id_private_key';
 	$item = $form['sos'][$item_name];
 	unset($item['#prefix'], $item['#suffix']);
 	$item['#value'] = _sos_generate_key();
@@ -118,19 +96,14 @@ function sos_ahah_generate_key($type = 'session') {
 function sos_settings_validate($form, &$form_state) {
 	$enabled = $form_state['values']['sos_enabled'];
 	if ($enabled) {
-		$sitekey = $form_state['values']['sos_global_session_id_private_key'];
-		$sesskey = $form_state['values']['sos_global_site_id_private_key'];
-		// %%% !!! implement stricter checks for key strength
-		if (empty($sitekey)) {
-			form_set_error('sos_global_site_id_private_key', 'Site key must be set if SOS is enabled.');
-		}
+		$sesskey = $form_state['values']['sos_session_id_private_key'];
+		// %%% implement stricter checks for key strength
 		if (empty($sesskey)) {
-			form_set_error('sos_global_session_id_private_key', 'Session key must be set if SOS is enabled.');
+			form_set_error('sos_session_id_private_key', 'Session key must be set if SOS is enabled.');
 		}
 	}
 
-	unset($form_state['values']['sos_global_session_id_key_generate']);
-	unset($form_state['values']['sos_global_site_id_key_generate']);
+	unset($form_state['values']['sos_session_id_key_generate']);
 }
 
 /*
@@ -147,7 +120,6 @@ function sos_sites_list(&$form_state) {
 
 	$header = array(
 		array('data' => t('Site Id'), 'field' => 's.site_id'),
-		array('data' => t('Global Id'), 'field' => 's.global_site_id'),
 		array('data' => t('Domain'), 'field' => 's.subdomain'),
 		array('data' => t('Site name'), 'field' => 's.site_name'),
 		array('data' => t('Status'), 'field' => 's.status'),
@@ -165,12 +137,12 @@ function sos_sites_list(&$form_state) {
 		// Set the status description.
 		$status = ($site->status == 1) ? t('Active') : t('Inactive');
 
-		$row = array($site->site_id, $site->global_site_id, check_plain($site->subdomain), check_plain($site->site_name), $status);
+		$row = array($site->site_id, check_plain($site->subdomain), check_plain($site->site_name), $status);
 
 		$actions = array();
-		$actions[] = l(t('edit'), 'admin/build/sos/sites/edit/'.$site->site_id);
+		$actions[] = l(t('edit'), 'admin/build/sos/settings/sites/edit/'.$site->site_id);
 		if ($site->site_id != $thissite->site_id) {
-			$actions[] = l(t('delete'), 'admin/build/sos/sites/delete/'.$site->site_id); // %%% force disable first?
+			$actions[] = l(t('delete'), 'admin/build/sos/settings/sites/delete/'.$site->site_id); // %%% force disable first?
 		}
 
 		// Add the actions.
@@ -202,21 +174,14 @@ function sos_load_site($site_id) {
 function sos_site_edit_form(&$form_state, $site_id = NULL) {
 	$thissite = sos_get_local_site();
 	if ($site_id != NULL) {
-		$site = sos_load_site($site_id); // %%% then test disabling site 3, then take screenshot, send to Sue
+		$site = sos_load_site($site_id);
 		$form_title = t('Edit SOS site');
-		$form_description = t('Alter the attributes of a site in the SOS ring.');
+		$form_description = t('Alter the attributes of a site in the SOS federation.');
 	} else {
 		$site = NULL;
 		$form_title = t('Add SOS site');
-		$form_description = t('Add a new site to the SOS ring.');
+		$form_description = t('Add a new site to the SOS federation.');
 	}
-
-	/*
-	if ($thissite->site_id == $site->site_id) {
-		watchdog('sos', "Attempt to edit the local SOS site", WATCHDOG_ERROR);
-		return FALSE;
-	}
-	*/
 
 
 	$form['site_id'] = array(
@@ -248,12 +213,6 @@ function sos_site_edit_form(&$form_state, $site_id = NULL) {
 		'#default_value' => $site->subdomain,
 	);
 	
-	if ($site) {
-		$form['sos_edit']['global_site_id'] = array(
-			'#type' => 'markup',
-			'#value' => t('Global site identifier').': '.$site->global_site_id,
-		);
-	}
 	$form['sos_edit']['status'] = array(
 		'#type' => 'checkbox',
 		'#title' => 'Active',
@@ -329,11 +288,10 @@ function sos_site_edit_form_submit($form, &$form_state) {
 
 	// Insert case
 	} else {
-		$gsiteid = _sos_calculate_global_site_id($subdomain);
 		// Insert but hold off on activation.
 		db_query(
-			"INSERT INTO {sos_sites} (subdomain, site_name, global_site_id, status) VALUES ('%s', '%s', '%s', 0)",
-			$subdomain, $sitename, $gsiteid
+			"INSERT INTO {sos_sites} (subdomain, site_name, status) VALUES ('%s', '%s', 0)",
+			$subdomain, $sitename
 		);
 		$siteid = db_insert_id();
 		if ($siteid && $status) {

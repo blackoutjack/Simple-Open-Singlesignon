@@ -1,4 +1,4 @@
 ; $Id: sos.info,v 0.0 2011/02/20 04:51:48 blackoutjack Exp $
-name = Simple Open Singlesignon
+name = Symmetric Open Singlesignon
 description = Logs in a user simultaneously to a group of domains
 core = 6.x

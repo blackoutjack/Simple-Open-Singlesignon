@@ -10,7 +10,7 @@ include_once 'sos.util.inc';
  * Implement hook_install()
  */
 function sos_install() {
-	drupal_install_schema('sos_sites');
+	drupal_install_schema('sos');
 
 	if (module_exists('domain')) {
 		// Automatically sync with domain module.
@@ -18,47 +18,53 @@ function sos_install() {
 		foreach ($domains as $domain) {
 			$domain_id = $domain['domain_id'];
 			$subdomain = $domain['subdomain'];
-			$globalsiteid = _sos_calculate_global_site_id($subdomain);
-			$sitename = $domain['site_name'];
+			$sitename = $domain['sitename'];
 			$status = $domain['valid'];
 			db_query(
-				"INSERT INTO {sos_sites} SET subdomain='%s', site_name='%s', global_site_id='%s',".
+				"INSERT INTO {sos_sites} SET subdomain='%s', site_name='%s',".
 				" domain_id=%d, status=%d",
-				$subdomain, $sitename, $globalsiteid, $domain_id, $status
+				$subdomain, $sitename, $domain_id, $status
 			);
 		}
 	} else {
 		// Enter the current domain.
 		$subdomain = strtolower(rtrim($_SERVER['SERVER_NAME']));
-		$globalsiteid = _sos_calculate_global_site_id($subdomain);
 		$sitename = variable_get('site_name', 'Drupal');
 		db_query(
-			"INSERT INTO {sos_sites} SET subdomain='%s', site_name='%s', global_site_id='%s', domain_id=0, status=1",
-			$subdomain, $sitename, $globalsiteid
+			"INSERT INTO {sos_sites} SET subdomain='%s', site_name='%s', domain_id=0, status=1",
+			$subdomain, $sitename
 		);
 	}
+	sos_install_session_table();
 
 	// Require explicit activation of SOS services.
 	variable_set('sos_enabled', 0);
+}
+
+function sos_install_session_table() {
+	db_query("ALTER TABLE {sessions} ADD sos_sid VARCHAR(64) NOT NULL DEFAULT ''");
+}
+
+function sos_uninstall_session_table() {
+	db_query("ALTER TABLE {sessions} DROP sos_sid");
 }
 
 /**
  * Implement hook_schema()
  */
 function sos_schema() {
+	// Create the sos_sites table.
 	$schema['sos_sites'] = array(
 		'fields' => array(
 			'site_id' => array('type' => 'serial', 'not null' => TRUE),
 			'site_name' => array('type' => 'varchar', 'length' => '255', 'not null' => TRUE, 'default' => ''),
 			'subdomain' => array('type' => 'varchar', 'length' => '255', 'not null' => TRUE, 'default' => ''),
-			'global_site_id' => array('type' => 'varchar', 'length' => '255', 'not null' => TRUE, 'default' => ''),
 			'domain_id' => array('type' => 'int', 'not null' => TRUE, 'default' => 0),
-			'status' => array('type' => 'tinyint', 'not null' => TRUE, 'default' => 0),
-			'primary key' => array('site_id'),
+			'status' => array('type' => 'int', 'not null' => TRUE, 'default' => 0),
 		),
-		'indexes' => array(
+		'primary key' => array('site_id'),
+		'indexes' => array (
 			'subdomain' => array('subdomain'),
-			'global_site_id' => array('global_site_id'),
 		),
 	);
 	return $schema;
@@ -68,6 +74,7 @@ function sos_schema() {
  * Implement hook_uninstall()
  */
 function sos_uninstall() {
+	sos_uninstall_session_table();
 	drupal_uninstall_schema('sos');
 	db_query("DELETE from {variable} WHERE name LIKE '%s%%'", 'sos_');
 }
